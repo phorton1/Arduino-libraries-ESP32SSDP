@@ -31,6 +31,35 @@ License (MIT license):
 #include "WiFiUdp.h"
 #include <lwip/ip_addr.h>
 
+// prh 2024-09-14 - updated from ESP32 Core 1.0.6 to 3.0.4
+// Needed to include <core_version.h> to get defines.
+//      #define ARDUINO_ESP32_GIT_VER 0x46d5afb1
+//      #define ARDUINO_ESP32_GIT_DESC 1.0.6
+//      #define ARDUINO_ESP32_RELEASE_1_0_6
+//      #define ARDUINO_ESP32_RELEASE "1_0_6"
+// versus
+//      #define ARDUINO_ESP32_GIT_VER 0x1a42b87f
+//      #define ARDUINO_ESP32_GIT_DESC 3.0.4
+//      #define ARDUINO_ESP32_RELEASE_3_0_4
+//      #define ARDUINO_ESP32_RELEASE "3_0_4"
+// Don't know when specific changes became necessary, and,
+// can't compare strings or dotted numbers, and git versions
+// are unordered uuid's, so, unfortunately have to test against
+// specific version and assume if it's not my old version, it
+// must be my new version.  If I had maintained ESP32SSDP through
+// every ESP32 Core release version, I could have a complicated,
+// but more complete solution.
+
+#include <core_version.h>
+#pragma message( "ESP32 Core Version " ARDUINO_ESP32_RELEASE) )
+
+#ifndef ARDUINO_ESP32_RELEASE_1_0_6
+    #include <rom/ets_sys.h>
+    #include <esp_netif.h>
+#endif
+
+
+
 //#define DEBUG_SSDP  Serial
 
 #define SSDP_INTERVAL     1200
@@ -154,17 +183,45 @@ void SSDPClass::end()
 
 IPAddress SSDPClass::localIP()
 {
-    tcpip_adapter_ip_info_t ip;
-    if (WiFi.getMode() == WIFI_STA) {
-        if (tcpip_adapter_get_ip_info(TCPIP_ADAPTER_IF_STA, &ip)) {
-            return IPAddress();
+    #ifdef ARDUINO_ESP32_RELEASE_1_0_6
+
+        // following api dissapearad in 3_0_4
+
+        tcpip_adapter_ip_info_t ip;
+        if (WiFi.getMode() == WIFI_STA) {
+            if (tcpip_adapter_get_ip_info(TCPIP_ADAPTER_IF_STA, &ip)) {
+                return IPAddress();
+            }
+        } else if (WiFi.getMode() == WIFI_OFF) {
+            if (tcpip_adapter_get_ip_info(TCPIP_ADAPTER_IF_ETH, &ip)) {
+                return IPAddress();
+            }
         }
-    } else if (WiFi.getMode() == WIFI_OFF) {
-        if (tcpip_adapter_get_ip_info(TCPIP_ADAPTER_IF_ETH, &ip)) {
-            return IPAddress();
+        return IPAddress(ip.ip.addr);
+
+    #else   // so I wrote this
+
+        if (WiFi.getMode() == WIFI_STA &&
+            WiFi.status() == WL_CONNECTED)
+        {
+            return WiFi.localIP();
         }
-    }
-    return IPAddress(ip.ip.addr);
+
+        // this part is untested ..
+
+        else if (WiFi.getMode() == WIFI_OFF)
+        {
+            esp_netif_ip_info_t ip;
+            esp_netif_t* netif = esp_netif_next(NULL);
+            while (netif != NULL)
+            {
+                if (!esp_netif_get_ip_info(netif, &ip))
+                    return IPAddress(ip.ip.addr);
+            }
+        }
+        return IPAddress();
+    
+    #endif
 }
 
 void SSDPClass::setUUID(const char *uuid, bool rootonly)
